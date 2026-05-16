@@ -1,0 +1,78 @@
+#!/usr/bin/env expect
+###############################################################################
+# vm-ping-overlay.exp - Ping a peer over the nebula overlay
+#
+# Connects to a VM's serial/virtio console (via netcat), waits for the shell
+# prompt, runs `ping -c <count> -W <wait> <target>` and asserts that at least
+# one reply was received. Used by the two-node mesh lifecycle test.
+#
+# Usage:
+#   vm-ping-overlay.exp <port> <hostname> <target-ip> [count] [timeout]
+#
+# Example:
+#   vm-ping-overlay.exp 45002 nebula-edge 10.42.0.1 5 30
+###############################################################################
+
+if {$argc < 3} {
+    send_user "Usage: vm-ping-overlay.exp <port> <hostname> <target-ip> \[count\] \[timeout\]\n"
+    exit 1
+}
+
+set port [lindex $argv 0]
+set hostname [lindex $argv 1]
+set target [lindex $argv 2]
+set count [expr {$argc > 3 ? [lindex $argv 3] : 5}]
+set timeout_secs [expr {$argc > 4 ? [lindex $argv 4] : 30}]
+
+set prompt_pattern "root@${hostname}:\[^#\]*#"
+
+log_user 1
+spawn nc 127.0.0.1 $port
+sleep 0.3
+send "\r"
+
+set timeout $timeout_secs
+expect {
+    -re $prompt_pattern { }
+    timeout {
+        send_user "ERROR: timeout waiting for prompt on port $port\n"
+        exit 1
+    }
+    eof {
+        send_user "ERROR: connection closed on port $port\n"
+        exit 1
+    }
+}
+
+set marker "__PING_DONE_$port\_$target"
+send "ping -c $count -W 2 $target; echo $marker\r"
+
+set replied 0
+expect {
+    -re "bytes from $target" {
+        set replied 1
+        exp_continue
+    }
+    -re $marker {
+        # ping finished
+    }
+    timeout {
+        send_user "ERROR: ping timed out after ${timeout_secs}s\n"
+        exit 1
+    }
+    eof {
+        send_user "ERROR: connection closed during ping\n"
+        exit 1
+    }
+}
+
+send "exit\r"
+expect eof
+
+if {$replied} {
+    send_user "PASS: ping $target succeeded\n"
+    exit 0
+} else {
+    send_user "FAIL: no replies from $target after $count attempts\n"
+    exit 1
+}

@@ -1,0 +1,182 @@
+#!/usr/bin/env expect
+###############################################################################
+# vm-verify-service.exp - Verify a systemd service has reached active state
+#
+# Connects via netcat to a VM's TCP console, waits for the login shell prompt,
+# then probes `systemctl is-active <service>`. If the service is still
+# activating, attaches to `journalctl -fu <service>` and watches for completion
+# patterns.
+#
+# Adapted from xdp2's vm-verify-service.exp; service name and completion regex
+# are parameterized so the same script can verify any unit.
+#
+# Usage:
+#   vm-verify-service.exp <port> <hostname> <service> [timeout] [poll_interval]
+#
+# Example:
+#   vm-verify-service.exp 45001 nebula-lighthouse nebula.service 60 2
+###############################################################################
+
+if {$argc < 3} {
+    send_user "Usage: vm-verify-service.exp <port> <hostname> <service> \[timeout\] \[poll_interval\]\n"
+    exit 1
+}
+
+set port [lindex $argv 0]
+set hostname [lindex $argv 1]
+set service [lindex $argv 2]
+set max_timeout [expr {$argc > 3 ? [lindex $argv 3] : 60}]
+set poll_interval [expr {$argc > 4 ? [lindex $argv 4] : 2}]
+
+set prompt_pattern "root@${hostname}:\[^#\]*#"
+
+log_user 0
+
+send_user "=== Verify Service: $service ===\n"
+send_user "Port: $port  Hostname: $hostname\n"
+send_user "Timeout: ${max_timeout}s\n\n"
+
+set script_start_ms [clock milliseconds]
+
+spawn nc 127.0.0.1 $port
+set nc_id $spawn_id
+send "\r"
+
+set timeout 30
+set prompt_attempts 0
+set max_prompt_attempts 3
+while {$prompt_attempts < $max_prompt_attempts} {
+    expect {
+        -re $prompt_pattern { break }
+        timeout {
+            incr prompt_attempts
+            if {$prompt_attempts < $max_prompt_attempts} {
+                send "\r"
+            } else {
+                send_user "ERROR: no prompt after $max_prompt_attempts attempts\n"
+                exit 1
+            }
+        }
+        eof {
+            send_user "ERROR: connection closed\n"
+            exit 1
+        }
+    }
+}
+
+set monitor_start_ms [clock milliseconds]
+set service_status "unknown"
+set detection_method "unknown"
+
+# Phase 1: Fast path -- is-active
+send "systemctl is-active $service 2>/dev/null\r"
+set timeout 5
+expect {
+    -re {(active)[\r\n]} {
+        set service_status "success"
+        set detection_method "systemctl (active)"
+    }
+    -re {(failed)[\r\n]} {
+        set service_status "failed"
+        set detection_method "systemctl (failed)"
+    }
+    -re {(activating)[\r\n]} {
+        set service_status "activating"
+    }
+    -re $prompt_pattern { }
+    timeout { }
+}
+
+expect {
+    -re $prompt_pattern { }
+    timeout { }
+}
+
+if {$service_status eq "success"} {
+    set total_ms [expr {[clock milliseconds] - $script_start_ms}]
+    send_user "PASS: $service active (${detection_method}, ${total_ms}ms)\n"
+    send "exit\r"
+    expect eof
+    exit 0
+} elseif {$service_status eq "failed"} {
+    send_user "FAIL: $service failed (${detection_method})\n"
+    send "exit\r"
+    expect eof
+    exit 1
+}
+
+# Phase 2: Stream-monitor journal
+set stream_start_ms [clock milliseconds]
+send_user "  $service activating; monitoring journal...\n"
+send "journalctl -fu $service --no-pager 2>&1\r"
+
+set timeout $poll_interval
+set total_elapsed 0
+set skip_first_line 1
+
+expect {
+    -re "Started.*$service" {
+        set service_status "success"
+        set detection_method "journal (Started)"
+    }
+    -re "$service: Deactivated successfully" {
+        set service_status "success"
+        set detection_method "journal (Deactivated)"
+    }
+    -re "$service: Failed" {
+        set service_status "failed"
+        set detection_method "journal (Failed)"
+    }
+    -re "$service: Main process exited.*status=" {
+        set service_status "failed"
+        set detection_method "journal (exit status)"
+    }
+    -re "\r\n" {
+        if {$skip_first_line} { set skip_first_line 0 }
+        exp_continue -continue_timer
+    }
+    timeout {
+        incr total_elapsed $poll_interval
+        if {$total_elapsed >= $max_timeout} {
+            set service_status "timeout"
+            set detection_method "timeout"
+        } else {
+            exp_continue
+        }
+    }
+    eof {
+        set service_status "eof"
+        set detection_method "connection closed"
+    }
+}
+
+# Cleanup
+send "\x03"
+send "\r"
+set timeout 5
+expect {
+    -re $prompt_pattern { }
+    timeout { }
+}
+send "exit\r"
+expect eof
+
+set total_ms [expr {[clock milliseconds] - $script_start_ms}]
+switch $service_status {
+    "success" {
+        send_user "PASS: $service is active (${detection_method}, ${total_ms}ms)\n"
+        exit 0
+    }
+    "failed" {
+        send_user "FAIL: $service entered failed state (${detection_method})\n"
+        exit 1
+    }
+    "timeout" {
+        send_user "FAIL: $service did not become active after ${max_timeout}s\n"
+        exit 1
+    }
+    default {
+        send_user "FAIL: $service unknown state (${detection_method})\n"
+        exit 1
+    }
+}

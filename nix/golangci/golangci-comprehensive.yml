@@ -1,0 +1,80 @@
+version: "2"
+run:
+  timeout: 30m
+  modules-download-mode: vendor
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - copyloopvar
+    - intrange
+    - gosec
+    - gocritic
+    - revive
+    - contextcheck
+    - sloglint
+    - testifylint
+    - unconvert
+    - unparam
+    - wastedassign
+    - nilerr
+    - perfsprint
+    - exhaustive
+    - prealloc
+    - gocyclo
+    - funlen
+    - goconst
+    - dupl
+    - bodyclose
+    - errorlint
+    - misspell
+    - nakedret
+    - nestif
+    - noctx
+    - rowserrcheck
+    - sqlclosecheck
+    - whitespace
+  settings:
+    sloglint:
+      kv-only: true
+    gocyclo:
+      min-complexity: 25
+    funlen:
+      lines: 200
+      statements: 100
+    gosec:
+      excludes:
+        - G101
+        - G115
+        - G204
+        - G304
+        - G306
+        - G401
+        - G501
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+      - ".*\\.pb\\.go$"
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+      - ".*\\.pb\\.go$"

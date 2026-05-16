@@ -235,6 +235,52 @@ smoke-vagrant/%: bin-docker build/%/nebula
 	cd .github/workflows/smoke/ && ./build.sh $*
 	cd .github/workflows/smoke/ && ./smoke-vagrant.sh $*
 
+# ─── Nix flake passthroughs ──────────────────────────────────────────────────
+# See nix/README.md for the full design. These are thin shims so devs can
+# work with the modular flake.nix at the repo root without learning the
+# nix CLI first.
+NIX_SYSTEM := $(shell nix eval --raw --impure --expr 'builtins.currentSystem' 2>/dev/null)
+
+nix-shell:
+	nix develop
+
+nix-build:
+	nix build -L .#nebula .#nebula-cert .#nebula-service
+
+nix-build-boringcrypto:
+	nix build -L .#nebula-boringcrypto .#nebula-cert-boringcrypto .#nebula-service-boringcrypto
+
+nix-build-pkcs11:
+	nix build -L .#nebula-pkcs11 .#nebula-cert-pkcs11 .#nebula-service-pkcs11
+
+nix-image:
+	nix build -L .#nebula-image .#nebula-cert-image
+
+nix-check:
+	nix flake check -L
+
+nix-lint-quick:
+	nix build -L .#checks.$(NIX_SYSTEM).golangci-lint-quick
+
+nix-lint:
+	nix build -L .#checks.$(NIX_SYSTEM).golangci-lint
+
+nix-lint-comprehensive:
+	nix build -L .#checks.$(NIX_SYSTEM).golangci-lint-comprehensive
+
+nix-vm-test:
+	nix run .#vm-test-mesh
+
+nix-vm-network-setup:
+	sudo nix run .#vm-network-setup-privileged
+
+nix-vm-network-teardown:
+	sudo nix run .#vm-network-teardown-privileged
+
+.PHONY: nix-shell nix-build nix-build-boringcrypto nix-build-pkcs11 nix-image \
+	nix-check nix-lint-quick nix-lint nix-lint-comprehensive nix-vm-test \
+	nix-vm-network-setup nix-vm-network-teardown
+
 .FORCE:
 .PHONY: bench bench-cpu bench-cpu-long bin build-test-mobile e2e e2ev e2evv e2evvv e2evvvv proto release service smoke-docker smoke-docker-race test test-cov-html smoke-vagrant/%
 .DEFAULT_GOAL := bin
