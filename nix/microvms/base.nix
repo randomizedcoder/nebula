@@ -84,7 +84,13 @@ let
           { pkgs, ... }:
           {
             system.stateVersion = "24.11";
-            networking.hostName = "nebula-${roleName}";
+
+            networking = {
+              hostName = "nebula-${roleName}";
+              useNetworkd = true;
+              useDHCP = false;
+              firewall.enable = false;
+            };
 
             microvm = {
               hypervisor = "qemu";
@@ -94,8 +100,8 @@ let
               interfaces = [
                 {
                   type = "tap";
+                  inherit (net) mac;
                   id = net.tap;
-                  mac = net.mac;
                 }
               ];
 
@@ -124,48 +130,51 @@ let
               ];
             };
 
-            systemd.network = {
-              enable = true;
-              networks."10-underlay" = {
-                matchConfig.Name = "eth*";
-                networkConfig = {
-                  DHCP = "no";
-                  Address = "${net.underlayIp}/${nebulaLib.underlay.netmask}";
+            systemd = {
+              network = {
+                enable = true;
+                networks."10-underlay" = {
+                  matchConfig.Name = "eth*";
+                  networkConfig = {
+                    DHCP = "no";
+                    Address = "${net.underlayIp}/${nebulaLib.underlay.netmask}";
+                  };
+                };
+              };
+
+              services.nebula = {
+                description = "Nebula overlay VPN (${roleName})";
+                after = [ "network-online.target" ];
+                wants = [ "network-online.target" ];
+                wantedBy = [ "multi-user.target" ];
+                serviceConfig = {
+                  Type = "simple";
+                  ExecStart = "${nebulaPkg}/bin/nebula -config /etc/nebula/config.yml";
+                  Restart = "on-failure";
+                  RestartSec = 2;
                 };
               };
             };
-            networking.useNetworkd = true;
-            networking.useDHCP = false;
-            networking.firewall.enable = false;
 
-            environment.etc."nebula/ca.crt".source = "${pki}/ca.crt";
-            environment.etc."nebula/${roleName}.crt".source = "${pki}/${roleName}.crt";
-            environment.etc."nebula/${roleName}.key".source = "${pki}/${roleName}.key";
-            environment.etc."nebula/config.yml".source = cfgFile;
-
-            systemd.services.nebula = {
-              description = "Nebula overlay VPN (${roleName})";
-              after = [ "network-online.target" ];
-              wants = [ "network-online.target" ];
-              wantedBy = [ "multi-user.target" ];
-              serviceConfig = {
-                Type = "simple";
-                ExecStart = "${nebulaPkg}/bin/nebula -config /etc/nebula/config.yml";
-                Restart = "on-failure";
-                RestartSec = 2;
+            environment = {
+              etc = {
+                "nebula/ca.crt".source = "${pki}/ca.crt";
+                "nebula/${roleName}.crt".source = "${pki}/${roleName}.crt";
+                "nebula/${roleName}.key".source = "${pki}/${roleName}.key";
+                "nebula/config.yml".source = cfgFile;
               };
+
+              systemPackages = [
+                nebulaPkg
+                pkgs.iproute2
+                pkgs.iputils
+                pkgs.netcat-gnu
+                pkgs.curl
+              ];
             };
 
             services.getty.autologinUser = "root";
             users.users.root.initialPassword = "nebula";
-
-            environment.systemPackages = [
-              nebulaPkg
-              pkgs.iproute2
-              pkgs.iputils
-              pkgs.netcat-gnu
-              pkgs.curl
-            ];
 
             documentation.enable = false;
             security.polkit.enable = false;

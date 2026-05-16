@@ -12,7 +12,7 @@ let
       system
       ;
   };
-  timeouts = microvmLib.timeouts;
+  inherit (microvmLib) timeouts;
 
   expectScripts = pkgs.runCommand "nebula-vm-expect-scripts" { } ''
     mkdir -p $out/bin

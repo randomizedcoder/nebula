@@ -1,5 +1,4 @@
 {
-  pkgs,
   lib,
   src,
   nebulaLib,
@@ -26,7 +25,7 @@ let
           CGO_ENABLED = if variant.cgo then "1" else "0";
         };
 
-      tags = variant.tags;
+      inherit (variant) tags;
 
       ldflags = nebulaLib.nebula.ldflags ++ [ "-X main.Build=${version}" ] ++ variant.extraLdflags;
 

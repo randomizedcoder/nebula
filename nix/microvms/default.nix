@@ -39,10 +39,6 @@ let
   lighthouse-vm = mkVm "lighthouse";
   edge-vm = mkVm "edge";
 
-  scripts = import ../scripts {
-    inherit pkgs lib nebulaLib;
-  };
-
   lifecycle = import ./lifecycle.nix {
     inherit
       pkgs
@@ -50,8 +46,6 @@ let
       system
       ;
   };
-
-  inherit (scripts) vm-network-setup-privileged vm-network-teardown-privileged;
 in
 {
   packages = {

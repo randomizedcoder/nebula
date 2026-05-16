@@ -1,12 +1,12 @@
 {
   pkgs,
-  lib,
   src,
   nebulaPkg,
 }:
 
 let
   goPkg = pkgs.go_1_26 or pkgs.go;
+  protocGenGogofaster = import ./protoc-gen-gogofaster.nix { inherit pkgs; };
 
   goEnv = ''
     export HOME=$TMPDIR
@@ -93,6 +93,14 @@ let
     '';
   };
 
+  # gosec exclusions:
+  #   G101  - hardcoded credentials false-positives in test fixtures
+  #   G115  - integer conversion overflow false-positives we accept
+  #   G204  - subprocess execution in test helpers and CLI commands
+  #   G304  - file path includes in test fixtures and config loaders
+  #   G306  - file write permissions in tests and tooling
+  #   G401  - SHA1 use in legacy interop helpers
+  #   G501  - md5 import for compatibility shims
   gosec =
     pkgs.runCommand "nebula-gosec"
       {
@@ -107,10 +115,13 @@ let
         ${withVendor}
         ${goEnv}
         export GOFLAGS="-mod=vendor"
-        gosec -exclude=G101,G115,G204,G304,G306,G401,G501 -quiet ./... || true
+        gosec -exclude=G101,G115,G204,G304,G306,G401,G501 -quiet ./...
         touch $out
       '';
 
+  # Regenerates nebula.pb.go and cert/cert_v1.pb.go from their .proto sources
+  # and asserts that the committed files match. Runs hermetically because the
+  # protoc plugins come in as derivations on PATH — no network fetching.
   proto-fresh =
     pkgs.runCommand "nebula-proto-fresh"
       {
@@ -118,29 +129,32 @@ let
           goPkg
           pkgs.protobuf
           pkgs.protoc-gen-go
-          pkgs.cacert
+          protocGenGogofaster
+          pkgs.diffutils
         ];
         inherit src;
       }
       ''
+        cp -r $src nebula-src-orig
         cp -r $src nebula-src
         chmod -R u+w nebula-src
         cd nebula-src
-        ${goEnv}
 
-        go build -o $TMPDIR/protoc-gen-gogofaster github.com/gogo/protobuf/protoc-gen-gogofaster || \
-          go install github.com/gogo/protobuf/protoc-gen-gogofaster@latest 2>/dev/null || \
-          true
+        # Top-level nebula.proto: run from repo root to match `make proto`
+        protoc --gogofaster_out=paths=source_relative:. nebula.proto
 
-        if [ -x "$TMPDIR/protoc-gen-gogofaster" ]; then
-          PATH="$TMPDIR:$PATH" protoc --gogofaster_out=paths=source_relative:. nebula.proto
+        # cert/cert_v1.proto: run from cert/ to match `cert/Makefile`'s
+        # invocation, so generated symbols carry the file_cert_v1_proto_*
+        # prefix rather than file_cert_cert_v1_proto_*.
+        ( cd cert && protoc --go_out=. --go_opt=paths=source_relative cert_v1.proto )
+
+        if ! diff -u ../nebula-src-orig/nebula.pb.go nebula.pb.go; then
+          echo "FAIL: nebula.pb.go is stale; regenerate with 'make proto'" >&2
+          exit 1
         fi
-        if [ -f cert/cert_v1.proto ]; then
-          protoc --go_out=paths=source_relative:. cert/cert_v1.proto
-        fi
-
-        if ! git diff --quiet --no-index nebula-src.orig/nebula.pb.go nebula.pb.go 2>/dev/null; then
-          echo "drift in nebula.pb.go"
+        if ! diff -u ../nebula-src-orig/cert/cert_v1.pb.go cert/cert_v1.pb.go; then
+          echo "FAIL: cert/cert_v1.pb.go is stale; regenerate with 'make proto'" >&2
+          exit 1
         fi
         touch $out
       '';

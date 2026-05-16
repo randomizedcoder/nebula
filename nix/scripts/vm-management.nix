@@ -78,8 +78,7 @@ let
 
 in
 {
-  vm-status = vm-status;
-  vm-stop = vm-stop;
+  inherit vm-status vm-stop;
 }
 // (lib.mapAttrs' (name: _: {
   name = "vm-console-${name}";

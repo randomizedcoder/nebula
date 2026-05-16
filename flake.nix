@@ -21,7 +21,7 @@
       system:
       let
         pkgs = import nixpkgs { inherit system; };
-        lib = pkgs.lib;
+        inherit (pkgs) lib;
 
         nebulaLib = import ./nix/lib.nix { inherit lib; };
 
@@ -51,7 +51,7 @@
         };
 
         checksAttrs = import ./nix/checks.nix {
-          inherit pkgs lib;
+          inherit pkgs;
           src = ./.;
           nebulaPkg = packagesAttrs.nebula;
         };

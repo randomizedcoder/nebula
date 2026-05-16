@@ -13,7 +13,6 @@ let
 
   mkNebula = import ./nebula.nix {
     inherit
-      pkgs
       lib
       src
       nebulaLib
@@ -22,7 +21,6 @@ let
   };
   mkNebulaCert = import ./nebula-cert.nix {
     inherit
-      pkgs
       lib
       src
       nebulaLib
@@ -31,7 +29,6 @@ let
   };
   mkNebulaService = import ./nebula-service.nix {
     inherit
-      pkgs
       lib
       src
       nebulaLib

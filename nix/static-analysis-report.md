@@ -29,21 +29,21 @@ Reproduction: `for c in nix-fmt statix deadnix go-vet staticcheck gosec proto-fr
 | Check | Status | Issues | Wall-clock |
 |---|---|---|---|
 | `nix-fmt` | PASS | 0 | 1 s |
-| `statix` | FAIL | 13 | 1 s |
-| `deadnix` | FAIL | 10 | 1 s |
+| `statix` | PASS | 0 | 1 s |
+| `deadnix` | PASS | 0 | 1 s |
 | `go-vet` | PASS | 0 | 11 s |
 | `staticcheck` | FAIL | 137 | 15 s |
-| `gosec` | PASS¹ | **57** (7 HIGH, 2 MED, 48 LOW) | 33 s |
-| `proto-fresh` | PASS² | unverified | 1 s |
+| `gosec` | FAIL | **57** (7 HIGH, 2 MED, 48 LOW) | 33 s |
+| `proto-fresh` | FAIL | drift in `cert/cert_v1.pb.go` from upstream protoc-gen-go version | 8 s |
 | `go-test-short` | PASS | 15 pkgs green | 16 s |
 | `golangci-lint-quick` (Tier 0) | FAIL | 143 | 15 s |
 | `golangci-lint` (Tier 1) | FAIL | 255 | 17 s |
 | `golangci-lint-comprehensive` (Tier 2) | FAIL | 422 | 16 s |
 | `govulncheck-nebula` (audit app) | FAIL | 8 stdlib CVEs | ~50 s |
 
-¹ `gosec` exits 0 due to `|| true` in `nix/checks.nix`; the 57 issues are real but the check infrastructure silently swallows them. **Fix recommended** — remove the `|| true`.
+The nix-side checks (`nix-fmt`, `statix`, `deadnix`) are clean by construction — the flake's own files pass every nix-level linter. The Go-side checks fail because they surface pre-existing findings in nebula's source; this is the intended "pedantic" behavior. See `nix/findings-nilerr-and-gosec.md` for the deep-dive on `nilerr` + `gosec` HIGH findings.
 
-² `proto-fresh` exits 0, but inside the nix sandbox it fails to bootstrap `protoc-gen-gogofaster` (no network), so the drift check effectively no-ops. **Fix recommended** — pass a pre-built `protoc-gen-gogofaster` derivation in.
+`proto-fresh` currently flags drift in `cert/cert_v1.pb.go` — the committed file was generated with `protoc-gen-go v1.34.2`/`protoc v3.21.5` (per its header comment), while the locked nixpkgs ships `protoc-gen-go v1.36.11`/`protoc v34.1`. The drift is real but version-driven, not "you forgot to regenerate". Regenerating with `nix develop -c bash -c 'cd cert && protoc --go_out=. --go_opt=paths=source_relative cert_v1.proto'` is a one-line behavioral change (newer protoc-gen-go emits the `protogen:"open.v1"` struct tags) and is best handled separately from this flake addition.
 
 ## Detailed findings
 
@@ -162,9 +162,9 @@ golangci-lint's `staticcheck` integration disables some rules by default.
 
 ### gosec — 57 issues
 
-`nix/checks.nix:gosec` currently appends `|| true`, so the derivation exits 0
-even with findings. The output is captured but does not block merges. Remove
-that `|| true` to gate on gosec.
+The check now correctly exits non-zero on findings (the earlier `|| true`
+shim was removed). With 57 issues across the codebase, `nix flake check`
+fails until they are triaged — that is the intended pedantic behavior.
 
 **HIGH severity (7) — by site:**
 
@@ -200,19 +200,13 @@ All 8 vulnerabilities are in the Go standard library and **all are `Fixed in: go
 
 No third-party module CVEs were found.
 
-### statix — 13 issues
+### statix / deadnix — clean
 
-All "use `inherit` instead of `x = scope.x` assignment" and a couple of
-"avoid repeated keys" (`microvm.qemu.extraArgs` is built up across attrs in
-`nix/microvms/base.nix:87,141`). Stylistic, but worth fixing for the clean
-baseline.
-
-### deadnix — 10 issues
-
-Unused lambda patterns (`lib`, `pkgs`, `self`, `config`) in flake plumbing
-files. Most were cleaned during the lint run; the remaining ones are
-`nix/microvms/pki.nix:3 lib`, `nix/microvms/base.nix:13 pki / :84 config`,
-and `nix/microvms/lifecycle.nix:6-8 vms/networkSetupScript/networkTeardownScript`.
+The flake's own .nix files pass `statix check .` and `deadnix --fail` with
+no findings. Repeated-key warnings were resolved by consolidating
+`networking.*` and `environment.*` into single attribute sets in
+`nix/microvms/base.nix`; the assignment-vs-inherit warnings were converted
+to `inherit` forms throughout.
 
 ### go-vet — clean
 
@@ -233,9 +227,17 @@ logging, noiseutil, overlay, routing, service, util
 
 Every `.nix` file in the tree round-trips through `nixfmt`.
 
-### proto-fresh — unverified
+### proto-fresh — now hermetic, flagging real drift
 
-The check imports the repo, attempts `go build github.com/gogo/protobuf/protoc-gen-gogofaster`, but the sandbox blocks `proxy.golang.org`, so the tool is never built and the drift check is silently skipped. To fix: thread the same `protocGenGogofaster` derivation that `nix/shell.nix` builds into `nix/checks.nix` as a `nativeBuildInput`. As-is, the check provides false reassurance.
+`protoc-gen-gogofaster` is now built as a shared derivation
+(`nix/protoc-gen-gogofaster.nix`) and consumed by both `nix/shell.nix` and
+the `proto-fresh` check, so the regeneration runs entirely inside the nix
+sandbox (no `proxy.golang.org` fetches). The check correctly diffs the
+regenerated `.pb.go` against the committed copy and exits non-zero on drift.
+
+Current drift: `cert/cert_v1.pb.go` was generated with an older
+`protoc-gen-go` than what nixpkgs ships. See the executive summary above for
+the regeneration command.
 
 ## Triage recommendation
 
@@ -249,28 +251,21 @@ Suggested order of work, biggest-leverage first:
    nonce in `cert/crypto.go:74` and `G703` path traversal in
    `cmd/nebula-cert/stdio.go:110`. Most are likely safe by construction; annotate with `//nolint:gosec` + reason.
 
-3. **Fix `nix/checks.nix:gosec` to drop `|| true`** so future regressions
-   are caught.
-
-4. **Fix `nix/checks.nix:proto-fresh`** so it actually verifies drift in the sandbox (pass `protocGenGogofaster` derivation in as a `nativeBuildInputs` entry).
-
-5. **`errcheck` (50)** — many are intentional (`*.Write` after format failures,
+3. **`errcheck` (50)** — many are intentional (`*.Write` after format failures,
    `defer file.Close()`). Decide per-package whether to fix or annotate
    with `//nolint:errcheck`. Establishing a "no new errcheck violations"
    gate on Tier 0 is realistic.
 
-6. **`unused` (12) + staticcheck `U1000` (16)** — net of overlap, roughly
+4. **`unused` (12) + staticcheck `U1000` (16)** — net of overlap, roughly
    20 unique dead-code sites including `overlay/tun.go:85-119` IPv4-mask
    helpers and `pkclient/pkclient.go:53,61` EC-key helpers. Either delete
    or wire them up.
 
-7. **Tier 0 cleanup overall (143 issues)** — once `errcheck` and `unused`
+5. **Tier 0 cleanup overall (143 issues)** — once `errcheck` and `unused`
    are triaged, the rest is mechanical: `ineffassign` (22) and `intrange` (6)
    and `staticcheck` simplifications.
 
-8. **`statix` (13) + `deadnix` (10)** — fix opportunistically, none are bugs.
-
-9. **Tier 2 only after Tier 1 is clean.** `goconst`/`nestif`/`gocyclo`
+6. **Tier 2 only after Tier 1 is clean.** `goconst`/`nestif`/`gocyclo`
    findings are largely stylistic in a codebase this size; they're useful
    as nightly tripwires rather than PR gates.
 
