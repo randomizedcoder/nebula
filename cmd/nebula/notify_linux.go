@@ -19,6 +19,12 @@ func notifyReady(l *slog.Logger) {
 		return
 	}
 
+	// #nosec G704 -- NOTIFY_SOCKET is the documented systemd sd_notify
+	// integration channel. Anyone able to set this env var is already
+	// inside the daemon's trust boundary. The connection is used only to
+	// write the fixed 7-byte string "READY=1" once; there is no
+	// remote-fetched data and no proxying surface that an SSRF attack
+	// could exploit.
 	conn, err := net.DialTimeout("unixgram", sockName, time.Second)
 	if err != nil {
 		l.Error("failed to connect to systemd notification socket", "error", err)

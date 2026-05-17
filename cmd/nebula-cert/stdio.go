@@ -107,6 +107,10 @@ func writeOutput(path string, data []byte, perm os.FileMode, stdout io.Writer) e
 		_, err := stdout.Write(data)
 		return err
 	}
+	// #nosec G703 -- path is a CLI flag (e.g. -out-crt, -out-key) supplied
+	// by the operator running nebula-cert from a shell. Writing where the
+	// user explicitly asks is the intended behavior of the tool; there is
+	// no remote attacker controlling this argument.
 	return os.WriteFile(path, data, perm)
 }
 

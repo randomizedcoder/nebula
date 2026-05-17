@@ -71,6 +71,11 @@ func aes256Encrypt(passphrase []byte, kdfParams *Argon2Parameters, data []byte) 
 		return nil, err
 	}
 
+	// #nosec G407 -- nonce is filled with crypto/rand on the line above
+	// before reaching Seal; this is the canonical AES-GCM encrypt pattern
+	// documented at https://pkg.go.dev/crypto/cipher#example-NewGCM-Encrypt.
+	// gosec pattern-matches make([]byte,n)→Seal without following the
+	// io.ReadFull(rand.Reader, ...) dataflow.
 	ciphertext := gcm.Seal(nil, nonce, data, nil)
 	blob := joinNonceCiphertext(nonce, ciphertext)
 
