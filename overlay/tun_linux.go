@@ -254,6 +254,11 @@ func newTun(c *config.C, l *slog.Logger, vpnNetworks []netip.Prefix, multiqueue 
 	if err != nil {
 		// If /dev/net/tun doesn't exist, try to create it (will happen in docker)
 		if os.IsNotExist(err) {
+			// #nosec G301 -- /dev/net is canonically 0755 on Linux (matches
+			// udev). Access to the tun device is gated by the device node's
+			// own 0600 perms set on the unix.Mknod call below, not by this
+			// directory; tightening here would diverge from convention
+			// without adding real defense.
 			err = os.MkdirAll("/dev/net", 0755)
 			if err != nil {
 				return nil, fmt.Errorf("/dev/net/tun doesn't exist, failed to mkdir -p /dev/net: %w", err)
