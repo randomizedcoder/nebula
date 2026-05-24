@@ -269,6 +269,39 @@ Suggested order of work, biggest-leverage first:
    findings are largely stylistic in a codebase this size; they're useful
    as nightly tripwires rather than PR gates.
 
+## Upstream submission status (as of 2026-05-23)
+
+The triage above has begun landing as upstream PRs. Counts in the executive summary are still pinned to the 2026-05-16 snapshot; this section tracks what has moved against that baseline.
+
+### Merged
+
+| PR | Title | Findings closed |
+|---|---|---|
+| [slackhq/nebula#1724](https://github.com/slackhq/nebula/pull/1724) | Reject port numbers outside [0, 65535] in firewall rule parsing | 3 × `gosec` G109 (firewall.go:1071, 1092, 1093) |
+
+### Open (split-by-subsystem, after upstream review feedback)
+
+The first round (two cross-subsystem PRs, #1725 + #1726) was closed in favor of three smaller subsystem PRs after @JackDoan asked for "separate PRs for config, ssh, and DNS improvements". For the `ssh.go` swallow sites originally proposed with `fmt.Errorf("...: %w", err)` propagation, the rewrite uses log+meter at the swallow site instead, since the dispatcher at `sshd/session.go:171` discards the return.
+
+| PR | Title | Findings closed |
+|---|---|---|
+| [slackhq/nebula#1737](https://github.com/slackhq/nebula/pull/1737) | Surface previously-swallowed errors from config path resolution | 1 × `nilerr` (config/config.go:334) + 1 × `errcheck` (`addFile` return discarded) |
+| [slackhq/nebula#1738](https://github.com/slackhq/nebula/pull/1738) | Log and meter previously-swallowed dns_server WriteMsg failures | 1 × `errcheck` G104 (`dns_server.go` `w.WriteMsg`) |
+| [slackhq/nebula#1739](https://github.com/slackhq/nebula/pull/1739) | Log and meter previously-swallowed SSH protocol and output-encode failures | 5 × `nilerr` (all swallow sites in `ssh.go`) + 3 × `errcheck` G104 (`sshd/session.go` reply/send-request sites) |
+
+### Closed (superseded)
+
+| PR | Why |
+|---|---|
+| [slackhq/nebula#1725](https://github.com/slackhq/nebula/pull/1725) | Closed in favor of #1737 + #1739; per-subsystem split with `ssh.go` reworked to log+meter |
+| [slackhq/nebula#1726](https://github.com/slackhq/nebula/pull/1726) | Closed in favor of #1737 + #1738 + #1739; per-subsystem split |
+
+### Cumulative coverage against the 2026-05-16 baseline
+
+- **`nilerr`**: all 6 sites are now covered by #1737 (1 site) and #1739 (5 sites). Both PRs are open, not yet merged.
+- **`gosec` HIGH**: 3 of 7 closed by merged #1724. Remaining 4 (G407, G704, G703, one G109) are untouched.
+- **`errcheck` G104**: 4 of 50 covered by the three open PRs (sshd/session × 3, dns_server × 1).
+
 ## Repro one-liner
 
 ```sh
